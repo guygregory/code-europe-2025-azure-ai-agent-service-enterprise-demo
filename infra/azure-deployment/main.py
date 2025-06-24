@@ -23,7 +23,7 @@ from gradio import ChatMessage
 # Azure AI Projects
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
-from azure.ai.projects.models import (
+from azure.ai.agents.models import (
     AgentEventHandler,
     RunStep,
     RunStepDeltaChunk,
@@ -46,19 +46,30 @@ load_dotenv(override=True)
 credential = DefaultAzureCredential()
 retry_policy = RetryPolicy()
 transport = RequestsTransport(connection_timeout=600, read_timeout=600)
-project_client = AIProjectClient.from_connection_string(
-    credential=credential,
-    conn_str=os.environ["PROJECT_CONNECTION_STRING"],
-    retry_policy=retry_policy,
-    transport=transport
+
+#project_client = AIProjectClient.from_connection_string(
+#    credential=credential,
+#    conn_str=os.environ["PROJECT_CONNECTION_STRING"],
+#    retry_policy=retry_policy,
+#    transport=transport
+#)
+
+project_client = AIProjectClient(
+    endpoint=os.environ["AZURE_AI_AGENT_PROJECT_ENDPOINT"],
+    credential=credential,  # Use Azure Default Credential for authentication
+    retry_policy = RetryPolicy(),
+    transport=transport,
 )
+
+agents_client = project_client.agents
 
 # Get the agent name from the environment variables
 AGENT_NAME = os.environ["AGENT_NAME"]
 
 # Find the agent by name
 found_agent = None
-all_agents_list = project_client.agents.list_agents().data
+#all_agents_list = project_client.agents.list_agents().data
+all_agents_list = agents_client.list_agents()
 for a in all_agents_list:
     if a.name == AGENT_NAME:
         found_agent = a
@@ -84,7 +95,7 @@ except Exception as e:
     print(f"bing failed > no connection found or permission issue: {e}")
 
 VECTOR_STORE_NAME = os.environ["VECTOR_STORE_NAME"]
-all_vector_stores = project_client.agents.list_vector_stores().data
+all_vector_stores = agents_client.vector_stores.list()
 existing_vector_store = next(
     (store for store in all_vector_stores if store.name == VECTOR_STORE_NAME),
     None
@@ -146,7 +157,7 @@ agent = update_agent_with_retry(
 print(f"reusing agent > {agent.name} (id: {agent.id})")
 
 # Create a Conversation Thread
-thread = project_client.agents.create_thread()
+thread = agents_client.threads.create()
 print(f"thread > created (id: {thread.id})")
 
 # Define a Custom Event Handler
@@ -258,7 +269,8 @@ def azure_enterprise_chat(user_message: str, history: List[dict]):
     yield conversation, ""
 
     # Post user message to the thread (for your back-end logic)
-    project_client.agents.create_message(
+    #project_client.agents.create_message(
+    agents_client.messages.create(
         thread_id=thread.id,
         role="user",
         content=user_message
@@ -405,7 +417,7 @@ def azure_enterprise_chat(user_message: str, history: List[dict]):
         finalize_tool_call(call_id)
 
     # -- EVENT STREAMING --
-    with project_client.agents.create_stream(
+    with agents_client.runs.stream(
         thread_id=thread.id,
         assistant_id=agent_id,
         event_handler=MyEventHandler()  # the event handler handles console output
